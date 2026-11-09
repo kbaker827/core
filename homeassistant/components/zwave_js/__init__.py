@@ -2,7 +2,6 @@
 
 import asyncio
 from collections import defaultdict
-import contextlib
 import logging
 from typing import Any
 
@@ -294,14 +293,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ZwaveJSConfigEntry) -> N
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    with contextlib.suppress(NotConnected):
+    command_cancelled = False
+    try:
+        await driver_events.setup(driver)
+    except NotConnected:
         # If the client isn't connected the listen task may have an exception
         # and we'll handle the clean up below.
-        await driver_events.setup(driver)
+        pass
+    except asyncio.CancelledError:
+        if (task := asyncio.current_task()) and task.cancelling():
+            raise
+        # The client cancels pending commands when the connection is lost.
+        command_cancelled = True
 
     # If the listen task is already failed, we need to raise ConfigEntryNotReady
-    if listen_task.done():
-        listen_error, error_message = _get_listen_task_error(listen_task)
+    if command_cancelled or listen_task.done():
+        error_message = "Client connection was closed"
+        listen_error = None
+        if listen_task.done():
+            listen_error, error_message = _get_listen_task_error(listen_task)
+        else:
+            listen_task.cancel()
         await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         raise ConfigEntryNotReady(error_message) from listen_error
 

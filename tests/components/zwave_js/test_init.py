@@ -1,7 +1,7 @@
 """Test the Z-Wave JS init module."""
 
 import asyncio
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from copy import deepcopy
 import logging
 from typing import Any
@@ -333,6 +333,89 @@ async def test_listen_done_during_setup_before_forward_entry(
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
     assert client.disconnect.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "finish_listen",
+    [
+        pytest.param(lambda listen_result: None, id="listen_running"),
+        pytest.param(
+            lambda listen_result: listen_result.set_result(None), id="listen_done"
+        ),
+    ],
+)
+async def test_command_cancelled_during_setup_after_forward_entry(
+    hass: HomeAssistant,
+    client: MagicMock,
+    listen_block: asyncio.Event,
+    finish_listen: Callable[[asyncio.Future[None]], None],
+) -> None:
+    """Test client cancelling a pending command during setup schedules a retry."""
+    listen_result = asyncio.Future[None]()
+    listen_block.set()
+    finish_listen(listen_result)
+
+    async def send_command_side_effect(*args: Any, **kwargs: Any) -> None:
+        """Mock send command cancelled by the client on disconnect."""
+        # Yield to allow the listen task to run
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError
+
+    async def listen(driver_ready: asyncio.Event) -> None:
+        """Mock listen."""
+        driver_ready.set()
+        client.async_send_command.side_effect = send_command_side_effect
+        await listen_block.wait()
+        await listen_result
+
+    client.listen.side_effect = listen
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"url": "ws://test.org", "data_collection_opted_in": True},
+    )
+    entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert client.disconnect.call_count == 1
+
+
+async def test_setup_task_cancelled_after_forward_entry(
+    hass: HomeAssistant,
+    client: MagicMock,
+    listen_block: asyncio.Event,
+) -> None:
+    """Test cancelling the setup task itself is not turned into a retry."""
+    setup_task: asyncio.Task[bool] | None = None
+
+    async def send_command_side_effect(*args: Any, **kwargs: Any) -> None:
+        """Mock send command while the setup task is cancelled."""
+        assert setup_task is not None
+        setup_task.cancel()
+        await asyncio.Event().wait()
+
+    async def listen(driver_ready: asyncio.Event) -> None:
+        """Mock listen."""
+        driver_ready.set()
+        client.async_send_command.side_effect = send_command_side_effect
+        await listen_block.wait()
+
+    client.listen.side_effect = listen
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"url": "ws://test.org", "data_collection_opted_in": True},
+    )
+    entry.add_to_hass(hass)
+
+    setup_task = asyncio.create_task(hass.config_entries.async_setup(entry.entry_id))
+    with pytest.raises(asyncio.CancelledError):
+        await setup_task
+
+    assert entry.state is not ConfigEntryState.SETUP_RETRY
 
 
 async def test_not_connected_during_setup_after_forward_entry(
