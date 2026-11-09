@@ -726,6 +726,16 @@ async def test_option_flow(
     }
 
 
+async def test_option_flow_aborts_if_entry_not_loaded(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """Test options flow aborts when the config entry is not loaded."""
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "integration_not_setup"
+
+
 async def test_discover_unifi_positive(hass: HomeAssistant) -> None:
     """Verify positive run of UniFi discovery."""
     with patch("socket.gethostbyname", return_value="192.168.1.1"):
