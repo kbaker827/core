@@ -148,6 +148,24 @@ async def test_no_circuits_read_without_heating_zones(
 
 
 @pytest.mark.usefixtures("init_integration")
+async def test_no_circuits_read_for_zones_without_type(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test zones without a type, like Tado X rooms, do not break the setup."""
+    zones = [{"id": 1, "name": "Living room"}]
+    with (
+        patch("PyTado.interface.api.my_tado.Tado.get_zones", return_value=zones),
+        patch(
+            "PyTado.interface.api.my_tado.Tado.get_heating_circuits"
+        ) as mock_circuits,
+    ):
+        await setup_integration(hass, mock_config_entry)
+
+    mock_circuits.assert_not_called()
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+
+
+@pytest.mark.usefixtures("init_integration")
 async def test_unknown_when_circuit_is_not_listed(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

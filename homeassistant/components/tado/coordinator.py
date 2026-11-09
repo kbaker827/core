@@ -476,7 +476,9 @@ class TadoDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_fetch_heating_circuits(self) -> None:
         """Fetch the heating circuits and their current per-zone assignment."""
-        heating_zones = [zone for zone in self.zones if zone["type"] == TYPE_HEATING]
+        heating_zones = [
+            zone for zone in self.zones if zone.get("type") == TYPE_HEATING
+        ]
         if not heating_zones:
             return
 
