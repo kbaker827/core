@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiohttp import ClientConnectionError
+from apyhiveapi.helper.hive_exceptions import HiveApiError
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
@@ -278,3 +280,27 @@ async def test_all_platforms_forwarded_without_devices(
     assert entry.state is ConfigEntryState.LOADED
     assert "Error setting up entry" not in caplog.text
     assert "Error unloading entry" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "exception",
+    [HiveApiError, ClientConnectionError, TimeoutError],
+)
+async def test_setup_retries_on_connection_error(
+    hass: HomeAssistant, exception: type[Exception]
+) -> None:
+    """A transient connection error during setup schedules a retry."""
+    entry = MockConfigEntry(domain=DOMAIN, data=_ENTRY_DATA)
+    entry.add_to_hass(hass)
+
+    mock_hive = _make_mock_hive({})
+    mock_hive.session.startSession.side_effect = exception
+
+    with patch(
+        "homeassistant.components.hive.Hive",
+        return_value=mock_hive,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
