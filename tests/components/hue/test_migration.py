@@ -268,3 +268,45 @@ async def test_zigbee_connection_migration(
         (dr.CONNECTION_NETWORK_MAC, network_mac),
     }
     assert config_entry.minor_version == 2
+
+
+async def test_zigbee_connection_migration_shared_mac(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+) -> None:
+    """Test migration does not fail when devices share a zigbee mac."""
+    config_entry = MockConfigEntry(
+        domain=hue.DOMAIN,
+        data={"host": "mock-host", "api_version": 2, "api_key": ""},
+        minor_version=1,
+    )
+    config_entry.add_to_hass(hass)
+
+    zigbee_mac = "cc:86:ec:ff:fe:ef:00:01"
+    network_mac = "aa:bb:cc:dd:ee:ff"
+    # Multi-channel devices share one zigbee mac, so another channel may
+    # already own the zigbee connection.
+    first_channel = device_registry.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={(hue.DOMAIN, "channel-1")},
+        connections={(dr.CONNECTION_ZIGBEE, zigbee_mac)},
+    )
+    second_channel = device_registry.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={(hue.DOMAIN, "channel-2")},
+        connections={
+            (dr.CONNECTION_NETWORK_MAC, zigbee_mac),
+            (dr.CONNECTION_NETWORK_MAC, network_mac),
+        },
+    )
+
+    with patch("homeassistant.components.hue.async_setup_entry", return_value=None):
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+
+    assert config_entry.minor_version == 2
+    assert device_registry.async_get(first_channel.id).connections == {
+        (dr.CONNECTION_ZIGBEE, zigbee_mac)
+    }
+    assert device_registry.async_get(second_channel.id).connections == {
+        (dr.CONNECTION_NETWORK_MAC, network_mac)
+    }

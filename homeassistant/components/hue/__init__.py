@@ -1,5 +1,7 @@
 """Support for the Philips Hue system."""
 
+import logging
+
 from aiohue.util import normalize_bridge_id
 
 from homeassistant.config_entries import SOURCE_IGNORE
@@ -15,6 +17,8 @@ from .migration import check_migration
 from .services import async_setup_services
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -45,9 +49,18 @@ def _migrate_zigbee_connections(hass: HomeAssistant, entry: HueConfigEntry) -> N
         }
         if not zigbee_connections:
             continue
-        new_connections = (device.connections - zigbee_connections) | {
-            (dr.CONNECTION_ZIGBEE, value) for _, value in zigbee_connections
-        }
+        new_connections = device.connections - zigbee_connections
+        for _, value in zigbee_connections:
+            connection = (dr.CONNECTION_ZIGBEE, value)
+            # Multi-channel devices share one zigbee mac, only one may own it.
+            if dev_reg.async_get_device_by_connection(connection, entry.entry_id):
+                _LOGGER.debug(
+                    "Not adding zigbee connection %s to device %s, already in use",
+                    value,
+                    device.id,
+                )
+                continue
+            new_connections = new_connections | {connection}
         dev_reg.async_update_device(device.id, new_connections=new_connections)
 
 
