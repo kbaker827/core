@@ -2,7 +2,7 @@
 
 import copy
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
@@ -10,6 +10,7 @@ from zwave_js_server.const.command_class.meter import MeterType
 from zwave_js_server.event import Event
 from zwave_js_server.exceptions import FailedZWaveCommand
 from zwave_js_server.model.node import Node
+from zwave_js_server.model.node.data_model import NodeDataType
 
 from homeassistant.components.sensor import (
     ATTR_STATE_CLASS,
@@ -144,6 +145,62 @@ async def test_battery_sensors(
     assert state.attributes[ATTR_UNIT_OF_MEASUREMENT] == UnitOfTemperature.CELSIUS
     assert state.attributes[ATTR_DEVICE_CLASS] == SensorDeviceClass.TEMPERATURE
     assert state.attributes[ATTR_STATE_CLASS] == SensorStateClass.MEASUREMENT
+
+
+async def test_list_sensor_unmapped_state(
+    hass: HomeAssistant,
+    client: MagicMock,
+    ring_keypad_state: NodeDataType,
+) -> None:
+    """Test list sensor reports unknown for values missing from metadata states."""
+    node_state = copy.deepcopy(ring_keypad_state)
+    mains_status = next(
+        value
+        for value in node_state["values"]
+        if value.get("propertyKey") == "Mains status"
+    )
+    mains_status["metadata"]["states"] = {"0": "idle"}
+    mains_status["value"] = 3
+    node = Node(client, node_state)
+    client.driver.controller.nodes[node.node_id] = node
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"url": "ws://test.org"})
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    entity_id = "sensor.keypad_v2_mains_status"
+    state = hass.states.get(entity_id)
+    assert state
+    assert state.state == STATE_UNKNOWN
+    assert state.attributes[ATTR_DEVICE_CLASS] == SensorDeviceClass.ENUM
+    assert state.attributes[ATTR_VALUE] == 3
+
+    node.receive_event(
+        Event(
+            "value updated",
+            {
+                "source": "node",
+                "event": "value updated",
+                "nodeId": node.node_id,
+                "args": {
+                    "commandClassName": "Notification",
+                    "commandClass": 113,
+                    "endpoint": 0,
+                    "property": "Power Management",
+                    "propertyKey": "Mains status",
+                    "propertyName": "Power Management",
+                    "propertyKeyName": "Mains status",
+                    "newValue": 0,
+                    "prevValue": 3,
+                },
+            },
+        )
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state
+    assert state.state == "idle"
 
 
 async def test_numeric_sensor(

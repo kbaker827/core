@@ -977,6 +977,15 @@ class ZWaveListSensor(ZwaveSensor):
             self._attr_device_class = SensorDeviceClass.ENUM
             self._attr_options = list(info.primary_value.metadata.states.values())
 
+    @property
+    @override
+    def native_value(self) -> StateType:
+        """Return state of the sensor."""
+        states = self.info.primary_value.metadata.states
+        if states and str(self.info.primary_value.value) not in states:
+            return None
+        return super().native_value
+
     @callback
     @override
     def should_rediscover_on_metadata_update(self) -> bool:
