@@ -360,6 +360,56 @@ async def test_camera_live_view_no_subscription(
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(
+    ("has_subscription", "last_history"),
+    [
+        pytest.param(False, None, id="no_subscription"),
+        pytest.param(True, [], id="no_history"),
+    ],
+)
+@pytest.mark.parametrize(
+    "entity_id", ["camera.front_live_view", "camera.front_last_recording"]
+)
+async def test_camera_update_without_last_event(
+    hass: HomeAssistant,
+    mock_ring_client: Mock,
+    mock_ring_devices: Mock,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+    entity_id: str,
+    has_subscription: bool,
+    last_history: list | None,
+) -> None:
+    """Test updating a camera entity without a last event does not fail."""
+    await setup_platform(hass, Platform.CAMERA)
+    await async_setup_component(hass, "homeassistant", {})
+
+    front_camera_mock = mock_ring_devices.get_device(FRONT_DEVICE_ID)
+    front_camera_mock.has_subscription = has_subscription
+    if last_history is not None:
+        front_camera_mock.async_history = AsyncMock()
+        front_camera_mock.last_history = last_history
+
+    freezer.tick(SCAN_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    front_camera_mock.async_recording_url.reset_mock()
+
+    await hass.services.async_call(
+        "homeassistant",
+        "update_entity",
+        {"entity_id": entity_id},
+        blocking=True,
+    )
+
+    assert "Update for" not in caplog.text
+    front_camera_mock.async_recording_url.assert_not_called()
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["video_url"] is None
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_camera_stream_attributes(
     hass: HomeAssistant,
     mock_ring_client: Mock,
